@@ -20,7 +20,9 @@
 
   let links = $state<LinkDoc[]>([]);
   let loading = $state(true);
+  let error = $state('');
   let search = $state('');
+  let loaded = $state(false);
 
   const filtered = $derived(
     search.trim()
@@ -34,23 +36,31 @@
 
   $effect(() => {
     if (authStore.loading) return;
-    if (!authStore.user) {
-      goto('/login');
-      return;
-    }
+    if (!authStore.user) { goto('/login'); return; }
+    if (loaded) return; // don't reload on auth re-runs
     loadLinks();
   });
 
   async function loadLinks() {
     loading = true;
-    const q = query(
-      collection(db, 'links'),
-      where('uid', '==', authStore.user!.uid),
-      orderBy('createdAt', 'desc')
-    );
-    const snap = await getDocs(q);
-    links = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as LinkDoc);
-    loading = false;
+    error = '';
+    try {
+      const q = query(
+        collection(db, 'links'),
+        where('uid', '==', authStore.user!.uid),
+        orderBy('createdAt', 'desc')
+      );
+      const snap = await getDocs(q);
+      links = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as LinkDoc);
+      loaded = true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // Firestore index errors include a direct link to create the index
+      error = msg;
+      console.error('Dashboard load error:', e);
+    } finally {
+      loading = false;
+    }
   }
 
   function removeLink(id: string) {
@@ -117,6 +127,31 @@
           py-2.5 pl-9 pr-4 text-sm text-[#e2e8f0] placeholder-[var(--color-muted)] outline-none
           focus:border-[var(--color-accent)]"
       />
+    </div>
+  {/if}
+
+  <!-- Error -->
+  {#if error}
+    <div class="mb-4 rounded-xl border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 p-4">
+      <p class="mb-1 text-sm font-medium text-[var(--color-danger)]">Failed to load links</p>
+      <p class="font-mono text-xs text-[var(--color-muted)] break-all">{error}</p>
+      {#if error.includes('indexes?create_composite')}
+        <p class="mt-2 text-xs text-[#94a3b8]">
+          This query needs a Firestore composite index.
+          <a
+            href={error.match(/https:\/\/[^\s]+/)?.[0] ?? 'https://console.firebase.google.com'}
+            target="_blank"
+            rel="noopener"
+            class="text-[var(--color-accent-light)] underline"
+          >Click here to create it automatically →</a>
+        </p>
+      {/if}
+      <button
+        onclick={loadLinks}
+        class="mt-3 rounded-lg border border-[var(--color-border)] px-3 py-1 text-xs text-[var(--color-muted)] hover:text-[#94a3b8]"
+      >
+        Retry
+      </button>
     </div>
   {/if}
 
